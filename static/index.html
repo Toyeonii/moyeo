@@ -580,6 +580,10 @@ async function refreshLocations(){
   try{
     const res = await fetch(`${API}/api/family/${state.familyId}/locations`);
     const members = await res.json();
+    const currentIds = new Set(members.map(m=>m.member_id));
+    Object.keys(markers).forEach(id=>{
+      if(!currentIds.has(Number(id))) removeMemberMarker(Number(id));
+    });
     const me = members.find(m=> m.member_id === state.memberId);
     if(me && me.location){ myLastLocation = me.location; }
     renderMembers(members);
@@ -917,9 +921,21 @@ async function deleteMember(memberId, name){
   if(!confirm(`${name}님을 가족에서 삭제할까요?\n위치 기록도 함께 삭제됩니다.`)) return;
   try{
     await fetch(`${API}/api/members/${memberId}`, { method:"DELETE" });
+    removeMemberMarker(memberId);
     await renderMemberManageList();
     refreshLocations();
   }catch(e){ alert("삭제에 실패했어요."); }
+}
+
+function removeMemberMarker(memberId){
+  if(markers[memberId]){
+    markers[memberId].setMap(null);
+    delete markers[memberId];
+  }
+  if(overlays[memberId]){
+    overlays[memberId].setMap(null);
+    delete overlays[memberId];
+  }
 }
 
 // ---------- 초기화 ----------
