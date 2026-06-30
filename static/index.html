@@ -135,7 +135,22 @@
   .refresh-btn:active{transform:scale(0.985);}
   .refresh-btn.loading{opacity:0.75;}
 
-  .member-list{display:flex;flex-direction:column;gap:10px;}
+  .member-list{display:flex;flex-direction:column;gap:10px;overflow:hidden;max-height:1000px;transition:max-height .25s ease;}
+  .member-list.collapsed{max-height:158px;}
+  .show-more-btn{
+    width:100%;border:none;background:none;color:var(--coral-deep);font-size:12.5px;font-weight:700;
+    padding:10px 0 4px 0;cursor:pointer;
+  }
+  .member-manage-list{display:flex;flex-direction:column;gap:8px;max-height:340px;overflow-y:auto;}
+  .member-manage-row{
+    display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:var(--card);
+  }
+  .member-manage-row .member-avatar{width:38px;height:38px;font-size:18px;}
+  .member-manage-row .name{flex:1;font-weight:700;font-size:14px;}
+  .member-manage-row .del-btn{
+    background:none;border:none;color:#D9534F;font-size:12.5px;font-weight:700;cursor:pointer;padding:6px 8px;
+  }
+  .member-manage-row .me-tag{font-size:11px;color:var(--ink-soft);font-weight:600;}
   .member-card{
     display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:16px;
     background:var(--card);cursor:pointer;border:1.5px solid transparent;
@@ -264,13 +279,30 @@
         <span id="refreshBtnLabel">📍 위치 공유 확인하기</span>
       </button>
 
+      <div class="section-title" style="margin-top:0;">
+        <span>가족</span>
+        <button onclick="openMemberManage()">관리</button>
+      </div>
       <div class="member-list" id="memberList"></div>
+      <button class="show-more-btn" id="showMoreMembersBtn" style="display:none;" onclick="toggleMemberListExpand()"></button>
 
       <div class="section-title">
         <span>알림 받을 장소</span>
         <button onclick="openAddPlace()">+ 장소 추가</button>
       </div>
       <div class="place-list" id="placeList"></div>
+    </div>
+  </div>
+
+  <!-- ===== 가족 관리 모달 ===== -->
+  <div class="modal-overlay" id="memberManageModal" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-title">가족 관리</div>
+      <div class="member-manage-list" id="memberManageList"></div>
+      <p style="font-size:12px;color:var(--ink-soft);">테스트로 추가한 멤버나 더 이상 쓰지 않는 멤버를 삭제할 수 있어요. 본인은 삭제할 수 없어요.</p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeMemberManage()">닫기</button>
+      </div>
     </div>
   </div>
 
@@ -614,9 +646,17 @@ function batteryLabel(level, charging){
   return `${icon} ${level}%${charging ? " ⚡" : ""}`;
 }
 
+let memberListExpanded = false;
+
 function renderMembers(members){
   const list = document.getElementById("memberList");
-  list.innerHTML = members.map(m=>{
+  const sorted = [...members].sort((a,b)=>{
+    if(a.member_id === state.memberId) return -1;
+    if(b.member_id === state.memberId) return 1;
+    return 0;
+  });
+
+  list.innerHTML = sorted.map(m=>{
     const isMe = m.member_id === state.memberId;
     const fresh = m.location && (Date.now() - new Date(m.location.updated_at).getTime()) < 15*60*1000;
     const loc = m.location;
@@ -649,6 +689,25 @@ function renderMembers(members){
         ${loc ? `<div class="member-status ${fresh?'status-fresh':'status-stale'}">${fresh?'최근':'오래됨'}</div>` : ''}
       </div>`;
   }).join("") || `<div class="empty-note">아직 가족이 없어요. 코드를 공유해보세요.</div>`;
+
+  const moreBtn = document.getElementById("showMoreMembersBtn");
+  if(sorted.length > 2){
+    moreBtn.style.display = "block";
+    list.classList.toggle("collapsed", !memberListExpanded);
+    moreBtn.textContent = memberListExpanded ? "접기 ▲" : `가족 ${sorted.length}명 모두 보기 ▼`;
+  } else {
+    moreBtn.style.display = "none";
+    list.classList.remove("collapsed");
+  }
+}
+
+function toggleMemberListExpand(){
+  memberListExpanded = !memberListExpanded;
+  const list = document.getElementById("memberList");
+  const moreBtn = document.getElementById("showMoreMembersBtn");
+  list.classList.toggle("collapsed", !memberListExpanded);
+  const count = list.children.length;
+  moreBtn.textContent = memberListExpanded ? "접기 ▲" : `가족 ${count}명 모두 보기 ▼`;
 }
 
 function focusMember(memberId, lat, lng){
@@ -828,6 +887,39 @@ function openSettings(){
     localStorage.removeItem("moyeo_state");
     location.reload();
   }
+}
+
+// ---------- 가족 관리 ----------
+async function openMemberManage(){
+  document.getElementById("memberManageModal").style.display = "flex";
+  await renderMemberManageList();
+}
+function closeMemberManage(){
+  document.getElementById("memberManageModal").style.display = "none";
+}
+async function renderMemberManageList(){
+  const wrap = document.getElementById("memberManageList");
+  try{
+    const res = await fetch(`${API}/api/family/${state.familyId}/members`);
+    const members = await res.json();
+    wrap.innerHTML = members.map(m=>{
+      const isMe = m.id === state.memberId;
+      return `
+        <div class="member-manage-row">
+          <div class="member-avatar">${m.emoji}</div>
+          <div class="name">${m.name}</div>
+          ${isMe ? '<span class="me-tag">나</span>' : `<button class="del-btn" onclick="deleteMember(${m.id}, '${m.name}')">삭제</button>`}
+        </div>`;
+    }).join("") || `<div class="empty-note">가족이 없어요.</div>`;
+  }catch(e){ wrap.innerHTML = `<div class="empty-note">불러오지 못했어요.</div>`; }
+}
+async function deleteMember(memberId, name){
+  if(!confirm(`${name}님을 가족에서 삭제할까요?\n위치 기록도 함께 삭제됩니다.`)) return;
+  try{
+    await fetch(`${API}/api/members/${memberId}`, { method:"DELETE" });
+    await renderMemberManageList();
+    refreshLocations();
+  }catch(e){ alert("삭제에 실패했어요."); }
 }
 
 // ---------- 초기화 ----------

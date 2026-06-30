@@ -261,6 +261,19 @@ def list_members(family_id):
     return jsonify([dict(r) for r in rows])
 
 
+@app.route("/api/members/<int:member_id>", methods=["DELETE"])
+def delete_member(member_id):
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("DELETE FROM geofence_events WHERE member_id=%s", (member_id,))
+    cur.execute("DELETE FROM member_place_state WHERE member_id=%s", (member_id,))
+    cur.execute("DELETE FROM place_targets WHERE member_id=%s", (member_id,))
+    cur.execute("DELETE FROM locations WHERE member_id=%s", (member_id,))
+    cur.execute("DELETE FROM members WHERE id=%s", (member_id,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
 # ---------- API: 위치 ----------
 
 @app.route("/api/location/update", methods=["POST"])
