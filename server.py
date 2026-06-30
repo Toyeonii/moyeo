@@ -1,16 +1,16 @@
 """
-FamTrack - 가족 위치공유 앱 백엔드
-Flask + SQLite, realspy와 동일한 배포 패턴 (Render.com)
+FamTrack(모여) - 가족 위치공유 앱 백엔드
+Flask + PostgreSQL (Render.com), DATABASE_URL 환경변수로 연결
 """
 
 import os
-import sqlite3
 import string
 import random
-import time
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import Flask, request, jsonify, g, send_from_directory
 from flask_cors import CORS
+import psycopg2
+import psycopg2.extras
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -18,15 +18,22 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 app = Flask(__name__, static_folder=STATIC_DIR)
 CORS(app)
 
-DB_PATH = os.path.join(BASE_DIR, "famtrack.db")
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL 환경변수가 설정되어 있지 않습니다. "
+        "Render의 Postgres Internal Database URL을 등록해주세요."
+    )
+
 
 # ---------- DB ----------
 
 def get_db():
     db = getattr(g, "_database", None)
     if db is None:
-        db = g._database = sqlite3.connect(DB_PATH)
-        db.row_factory = sqlite3.Row
+        db = g._database = psycopg2.connect(
+            DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor
+        )
     return db
 
 
@@ -38,64 +45,58 @@ def close_db(exception):
 
 
 def init_db():
-    db = sqlite3.connect(DB_PATH)
-    db.executescript(
+    conn = psycopg2.connect(DATABASE_URL)
+    cur = conn.cursor()
+    cur.execute(
         """
         CREATE TABLE IF NOT EXISTS families (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             code TEXT UNIQUE NOT NULL,
             name TEXT NOT NULL,
             created_at TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS members (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            family_id INTEGER NOT NULL,
+            id SERIAL PRIMARY KEY,
+            family_id INTEGER NOT NULL REFERENCES families(id),
             name TEXT NOT NULL,
             emoji TEXT DEFAULT '👤',
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (family_id) REFERENCES families (id)
+            created_at TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS locations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            member_id INTEGER NOT NULL,
-            lat REAL NOT NULL,
-            lng REAL NOT NULL,
-            accuracy REAL,
-            updated_at TEXT NOT NULL,
-            FOREIGN KEY (member_id) REFERENCES members (id)
+            id SERIAL PRIMARY KEY,
+            member_id INTEGER NOT NULL REFERENCES members(id),
+            lat DOUBLE PRECISION NOT NULL,
+            lng DOUBLE PRECISION NOT NULL,
+            accuracy DOUBLE PRECISION,
+            updated_at TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS places (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            family_id INTEGER NOT NULL,
+            id SERIAL PRIMARY KEY,
+            family_id INTEGER NOT NULL REFERENCES families(id),
             name TEXT NOT NULL,
-            lat REAL NOT NULL,
-            lng REAL NOT NULL,
+            lat DOUBLE PRECISION NOT NULL,
+            lng DOUBLE PRECISION NOT NULL,
             radius_m INTEGER DEFAULT 150,
             icon TEXT DEFAULT '📍',
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (family_id) REFERENCES families (id)
+            created_at TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS place_targets (
-            place_id INTEGER NOT NULL,
-            member_id INTEGER NOT NULL,
-            PRIMARY KEY (place_id, member_id),
-            FOREIGN KEY (place_id) REFERENCES places (id),
-            FOREIGN KEY (member_id) REFERENCES members (id)
+            place_id INTEGER NOT NULL REFERENCES places(id),
+            member_id INTEGER NOT NULL REFERENCES members(id),
+            PRIMARY KEY (place_id, member_id)
         );
 
         CREATE TABLE IF NOT EXISTS geofence_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            member_id INTEGER NOT NULL,
-            place_id INTEGER NOT NULL,
-            event_type TEXT NOT NULL, -- 'arrive' | 'leave'
+            id SERIAL PRIMARY KEY,
+            member_id INTEGER NOT NULL REFERENCES members(id),
+            place_id INTEGER NOT NULL REFERENCES places(id),
+            event_type TEXT NOT NULL,
             created_at TEXT NOT NULL,
-            seen INTEGER DEFAULT 0,
-            FOREIGN KEY (member_id) REFERENCES members (id),
-            FOREIGN KEY (place_id) REFERENCES places (id)
+            seen INTEGER DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS member_place_state (
@@ -106,8 +107,9 @@ def init_db():
         );
         """
     )
-    db.commit()
-    db.close()
+    conn.commit()
+    cur.close()
+    conn.close()
 
 
 def gen_family_code(length=6):
@@ -126,7 +128,7 @@ def haversine_m(lat1, lng1, lat2, lng2):
 
 
 def now_iso():
-    return datetime.utcnow().isoformat() + "Z"
+    return datetime.now(timezone.utc).isoformat()
 
 
 # ---------- API: 가족 그룹 ----------
@@ -141,24 +143,29 @@ def create_family():
         return jsonify({"error": "member_name이 필요합니다"}), 400
 
     db = get_db()
+    cur = db.cursor()
+
+    code = None
     for _ in range(10):
-        code = gen_family_code()
-        exists = db.execute("SELECT 1 FROM families WHERE code=?", (code,)).fetchone()
-        if not exists:
+        candidate = gen_family_code()
+        cur.execute("SELECT 1 FROM families WHERE code=%s", (candidate,))
+        if not cur.fetchone():
+            code = candidate
             break
-    else:
+    if not code:
         return jsonify({"error": "코드 생성 실패, 다시 시도해주세요"}), 500
 
-    cur = db.execute(
-        "INSERT INTO families (code, name, created_at) VALUES (?, ?, ?)",
+    cur.execute(
+        "INSERT INTO families (code, name, created_at) VALUES (%s, %s, %s) RETURNING id",
         (code, family_name, now_iso()),
     )
-    family_id = cur.lastrowid
-    cur2 = db.execute(
-        "INSERT INTO members (family_id, name, emoji, created_at) VALUES (?, ?, ?, ?)",
+    family_id = cur.fetchone()["id"]
+
+    cur.execute(
+        "INSERT INTO members (family_id, name, emoji, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
         (family_id, member_name, emoji, now_iso()),
     )
-    member_id = cur2.lastrowid
+    member_id = cur.fetchone()["id"]
     db.commit()
 
     return jsonify(
@@ -182,21 +189,22 @@ def join_family():
         return jsonify({"error": "family_code와 member_name이 필요합니다"}), 400
 
     db = get_db()
-    family = db.execute("SELECT * FROM families WHERE code=?", (code,)).fetchone()
+    cur = db.cursor()
+    cur.execute("SELECT * FROM families WHERE code=%s", (code,))
+    family = cur.fetchone()
     if not family:
         return jsonify({"error": "가족 코드를 찾을 수 없습니다"}), 404
 
-    member_count = db.execute(
-        "SELECT COUNT(*) as c FROM members WHERE family_id=?", (family["id"],)
-    ).fetchone()["c"]
+    cur.execute("SELECT COUNT(*) as c FROM members WHERE family_id=%s", (family["id"],))
+    member_count = cur.fetchone()["c"]
     if member_count >= 8:
         return jsonify({"error": "가족 인원이 너무 많습니다"}), 400
 
-    cur = db.execute(
-        "INSERT INTO members (family_id, name, emoji, created_at) VALUES (?, ?, ?, ?)",
+    cur.execute(
+        "INSERT INTO members (family_id, name, emoji, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
         (family["id"], member_name, emoji, now_iso()),
     )
-    member_id = cur.lastrowid
+    member_id = cur.fetchone()["id"]
     db.commit()
 
     return jsonify(
@@ -213,9 +221,9 @@ def join_family():
 @app.route("/api/family/<int:family_id>/members", methods=["GET"])
 def list_members(family_id):
     db = get_db()
-    rows = db.execute(
-        "SELECT id, name, emoji FROM members WHERE family_id=?", (family_id,)
-    ).fetchall()
+    cur = db.cursor()
+    cur.execute("SELECT id, name, emoji FROM members WHERE family_id=%s", (family_id,))
+    rows = cur.fetchall()
     return jsonify([dict(r) for r in rows])
 
 
@@ -232,8 +240,9 @@ def update_location():
         return jsonify({"error": "member_id, lat, lng가 필요합니다"}), 400
 
     db = get_db()
-    db.execute(
-        "INSERT INTO locations (member_id, lat, lng, accuracy, updated_at) VALUES (?, ?, ?, ?, ?)",
+    cur = db.cursor()
+    cur.execute(
+        "INSERT INTO locations (member_id, lat, lng, accuracy, updated_at) VALUES (%s, %s, %s, %s, %s)",
         (member_id, lat, lng, accuracy, now_iso()),
     )
     db.commit()
@@ -245,11 +254,9 @@ def update_location():
 
 
 def is_target_member(db, place_id, member_id):
-    """이 장소가 특정 대상으로 지정되어 있으면 그 목록에 속하는지 확인.
-    대상이 하나도 지정되지 않았으면(전원 적용) True."""
-    targets = db.execute(
-        "SELECT member_id FROM place_targets WHERE place_id=?", (place_id,)
-    ).fetchall()
+    cur = db.cursor()
+    cur.execute("SELECT member_id FROM place_targets WHERE place_id=%s", (place_id,))
+    targets = cur.fetchall()
     if not targets:
         return True
     target_ids = {t["member_id"] for t in targets}
@@ -257,14 +264,14 @@ def is_target_member(db, place_id, member_id):
 
 
 def check_geofences(db, member_id, lat, lng):
-    """현재 위치를 기준으로 등록된 장소들에 대한 출입 상태를 갱신하고
-    상태가 바뀐 경우 geofence_events에 기록 후 반환한다."""
-    member = db.execute("SELECT * FROM members WHERE id=?", (member_id,)).fetchone()
+    cur = db.cursor()
+    cur.execute("SELECT * FROM members WHERE id=%s", (member_id,))
+    member = cur.fetchone()
     if not member:
         return []
-    places = db.execute(
-        "SELECT * FROM places WHERE family_id=?", (member["family_id"],)
-    ).fetchall()
+
+    cur.execute("SELECT * FROM places WHERE family_id=%s", (member["family_id"],))
+    places = cur.fetchall()
 
     fired = []
     for place in places:
@@ -274,16 +281,17 @@ def check_geofences(db, member_id, lat, lng):
         dist = haversine_m(lat, lng, place["lat"], place["lng"])
         is_inside_now = 1 if dist <= place["radius_m"] else 0
 
-        state = db.execute(
-            "SELECT is_inside FROM member_place_state WHERE member_id=? AND place_id=?",
+        cur.execute(
+            "SELECT is_inside FROM member_place_state WHERE member_id=%s AND place_id=%s",
             (member_id, place["id"]),
-        ).fetchone()
+        )
+        state = cur.fetchone()
         was_inside = state["is_inside"] if state else 0
 
         if is_inside_now != was_inside:
             event_type = "arrive" if is_inside_now else "leave"
-            db.execute(
-                "INSERT INTO geofence_events (member_id, place_id, event_type, created_at) VALUES (?, ?, ?, ?)",
+            cur.execute(
+                "INSERT INTO geofence_events (member_id, place_id, event_type, created_at) VALUES (%s, %s, %s, %s)",
                 (member_id, place["id"], event_type, now_iso()),
             )
             fired.append(
@@ -296,13 +304,13 @@ def check_geofences(db, member_id, lat, lng):
             )
 
         if state:
-            db.execute(
-                "UPDATE member_place_state SET is_inside=? WHERE member_id=? AND place_id=?",
+            cur.execute(
+                "UPDATE member_place_state SET is_inside=%s WHERE member_id=%s AND place_id=%s",
                 (is_inside_now, member_id, place["id"]),
             )
         else:
-            db.execute(
-                "INSERT INTO member_place_state (member_id, place_id, is_inside) VALUES (?, ?, ?)",
+            cur.execute(
+                "INSERT INTO member_place_state (member_id, place_id, is_inside) VALUES (%s, %s, %s)",
                 (member_id, place["id"], is_inside_now),
             )
 
@@ -312,16 +320,17 @@ def check_geofences(db, member_id, lat, lng):
 @app.route("/api/family/<int:family_id>/locations", methods=["GET"])
 def get_family_locations(family_id):
     db = get_db()
-    members = db.execute(
-        "SELECT id, name, emoji FROM members WHERE family_id=?", (family_id,)
-    ).fetchall()
+    cur = db.cursor()
+    cur.execute("SELECT id, name, emoji FROM members WHERE family_id=%s", (family_id,))
+    members = cur.fetchall()
 
     result = []
     for m in members:
-        loc = db.execute(
-            "SELECT lat, lng, accuracy, updated_at FROM locations WHERE member_id=? ORDER BY id DESC LIMIT 1",
+        cur.execute(
+            "SELECT lat, lng, accuracy, updated_at FROM locations WHERE member_id=%s ORDER BY id DESC LIMIT 1",
             (m["id"],),
-        ).fetchone()
+        )
+        loc = cur.fetchone()
         result.append(
             {
                 "member_id": m["id"],
@@ -338,12 +347,13 @@ def get_family_locations(family_id):
 @app.route("/api/family/<int:family_id>/places", methods=["GET"])
 def list_places(family_id):
     db = get_db()
-    rows = db.execute("SELECT * FROM places WHERE family_id=?", (family_id,)).fetchall()
+    cur = db.cursor()
+    cur.execute("SELECT * FROM places WHERE family_id=%s", (family_id,))
+    rows = cur.fetchall()
     result = []
     for r in rows:
-        targets = db.execute(
-            "SELECT member_id FROM place_targets WHERE place_id=?", (r["id"],)
-        ).fetchall()
+        cur.execute("SELECT member_id FROM place_targets WHERE place_id=%s", (r["id"],))
+        targets = cur.fetchall()
         place = dict(r)
         place["target_member_ids"] = [t["member_id"] for t in targets]
         result.append(place)
@@ -363,14 +373,17 @@ def add_place(family_id):
         return jsonify({"error": "name, lat, lng가 필요합니다"}), 400
 
     db = get_db()
-    cur = db.execute(
-        "INSERT INTO places (family_id, name, lat, lng, radius_m, icon, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    cur = db.cursor()
+    cur.execute(
+        "INSERT INTO places (family_id, name, lat, lng, radius_m, icon, created_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
         (family_id, name, lat, lng, radius_m, icon, now_iso()),
     )
-    place_id = cur.lastrowid
+    place_id = cur.fetchone()["id"]
     for mid in target_member_ids:
-        db.execute(
-            "INSERT OR IGNORE INTO place_targets (place_id, member_id) VALUES (?, ?)",
+        cur.execute(
+            "INSERT INTO place_targets (place_id, member_id) VALUES (%s, %s) "
+            "ON CONFLICT DO NOTHING",
             (place_id, mid),
         )
     db.commit()
@@ -383,9 +396,11 @@ def add_place(family_id):
 @app.route("/api/places/<int:place_id>", methods=["DELETE"])
 def delete_place(place_id):
     db = get_db()
-    db.execute("DELETE FROM places WHERE id=?", (place_id,))
-    db.execute("DELETE FROM member_place_state WHERE place_id=?", (place_id,))
-    db.execute("DELETE FROM place_targets WHERE place_id=?", (place_id,))
+    cur = db.cursor()
+    cur.execute("DELETE FROM geofence_events WHERE place_id=%s", (place_id,))
+    cur.execute("DELETE FROM member_place_state WHERE place_id=%s", (place_id,))
+    cur.execute("DELETE FROM place_targets WHERE place_id=%s", (place_id,))
+    cur.execute("DELETE FROM places WHERE id=%s", (place_id,))
     db.commit()
     return jsonify({"ok": True})
 
@@ -396,7 +411,8 @@ def delete_place(place_id):
 def get_events(family_id):
     """seen=0인 새 이벤트들을 가져오고 seen=1로 마킹한다."""
     db = get_db()
-    rows = db.execute(
+    cur = db.cursor()
+    cur.execute(
         """
         SELECT ge.id, ge.event_type, ge.created_at,
                m.name as member_name, m.emoji as member_emoji,
@@ -404,16 +420,17 @@ def get_events(family_id):
         FROM geofence_events ge
         JOIN members m ON m.id = ge.member_id
         JOIN places p ON p.id = ge.place_id
-        WHERE m.family_id = ? AND ge.seen = 0
+        WHERE m.family_id = %s AND ge.seen = 0
         ORDER BY ge.id ASC
         """,
         (family_id,),
-    ).fetchall()
+    )
+    rows = cur.fetchall()
     ids = [r["id"] for r in rows]
     if ids:
-        db.execute(
-            f"UPDATE geofence_events SET seen=1 WHERE id IN ({','.join('?'*len(ids))})",
-            ids,
+        cur.execute(
+            "UPDATE geofence_events SET seen=1 WHERE id = ANY(%s)",
+            (ids,),
         )
         db.commit()
     return jsonify([dict(r) for r in rows])
@@ -436,9 +453,8 @@ def health():
     return jsonify({"status": "ok", "time": now_iso()})
 
 
+init_db()
+
 if __name__ == "__main__":
-    init_db()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
-else:
-    init_db()
