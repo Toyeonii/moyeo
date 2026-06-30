@@ -475,21 +475,36 @@ function upsertMarker(memberId, lat, lng, emoji, isMe){
 }
 
 // ---------- 내 위치 전송 ----------
+function describeGeoError(err){
+  switch(err.code){
+    case 1: return "위치 권한이 거부되었어요. 브라우저 설정에서 위치 접근을 허용해주세요.";
+    case 2: return "현재 위치를 확인할 수 없어요. GPS나 Wi-Fi 위치 서비스를 확인해주세요.";
+    case 3: return "위치를 가져오는데 시간이 너무 오래 걸렸어요. 다시 시도해주세요.";
+    default: return "위치를 가져오지 못했어요.";
+  }
+}
+
 function startWatchingMyLocation(){
-  if(!navigator.geolocation){ return; }
+  if(!navigator.geolocation){
+    showToast("⚠️ 이 브라우저는 위치 기능을 지원하지 않아요.");
+    return;
+  }
   if(watchId) navigator.geolocation.clearWatch(watchId);
   watchId = navigator.geolocation.watchPosition(
     pos=>{
       sendMyLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
     },
-    err=>{ console.warn("위치 오류", err); },
+    err=>{
+      console.warn("위치 오류 code:", err.code, "message:", err.message);
+      showToast("⚠️ " + describeGeoError(err));
+    },
     { enableHighAccuracy:false, maximumAge:60000, timeout:20000 }
   );
   // 5분 주기 보조 폴링 (백그라운드 절전 대비)
   setInterval(()=>{
     navigator.geolocation.getCurrentPosition(
       pos=> sendMyLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy),
-      err=> console.warn(err),
+      err=> console.warn("위치 오류 code:", err.code, "message:", err.message),
       { enableHighAccuracy:false, maximumAge:60000, timeout:20000 }
     );
   }, 5*60*1000);
