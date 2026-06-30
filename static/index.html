@@ -425,15 +425,34 @@ function initMap(){
 
         kakao.maps.event.addListener(map, "click", (mouseEvent)=>{
           if(!placePickMode) return;
-          const latlng = mouseEvent.latLng;
-          pickedLatLng = { lat: latlng.getLat(), lng: latlng.getLng() };
-          if(pickMarker) pickMarker.setMap(null);
-          pickMarker = new kakao.maps.Marker({
-            position: latlng,
-            map: map,
-            image: makeMarkerImage("📍", false)
-          });
-          openAddPlaceModal();
+          try{
+            const latlng = mouseEvent.latLng;
+            pickedLatLng = { lat: latlng.getLat(), lng: latlng.getLng() };
+          }catch(e1){
+            console.error("좌표 추출 실패:", e1);
+            showToast("⚠️ 좌표 추출 실패: " + e1.message);
+            return;
+          }
+          try{
+            if(pickMarker) pickMarker.setMap(null);
+          }catch(e2){
+            console.error("기존 마커 제거 실패:", e2);
+          }
+          try{
+            pickMarker = new kakao.maps.Marker({
+              position: mouseEvent.latLng,
+              map: map
+            });
+          }catch(e3){
+            console.error("마커 생성 실패:", e3);
+            showToast("⚠️ 마커 생성 실패: " + e3.message);
+          }
+          try{
+            openAddPlaceModal();
+          }catch(e4){
+            console.error("모달 열기 실패:", e4);
+            showToast("⚠️ 모달 열기 실패: " + e4.message);
+          }
         });
       }catch(innerErr){
         console.error("지도 초기화 오류:", innerErr);
