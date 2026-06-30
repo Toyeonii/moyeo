@@ -523,12 +523,22 @@ async function refreshLocations(){
       }
     });
     const located = members.filter(m=>m.location);
-    if(located.length){
-      const bounds = new kakao.maps.LatLngBounds();
-      located.forEach(m=> bounds.extend(new kakao.maps.LatLng(m.location.lat, m.location.lng)));
-      map.setBounds(bounds);
+    try{
+      if(located.length === 1){
+        map.setCenter(new kakao.maps.LatLng(located[0].location.lat, located[0].location.lng));
+        map.setLevel(4);
+      } else if(located.length > 1){
+        const bounds = new kakao.maps.LatLngBounds();
+        located.forEach(m=> bounds.extend(new kakao.maps.LatLng(m.location.lat, m.location.lng)));
+        map.setBounds(bounds);
+      }
+    }catch(boundsErr){
+      console.error("지도 범위 조정 실패:", boundsErr);
     }
-  }catch(e){ showToast("위치를 불러오지 못했어요. 다시 시도해주세요."); }
+  }catch(e){
+    console.error("위치 불러오기 실패:", e);
+    showToast("위치를 불러오지 못했어요. 다시 시도해주세요.");
+  }
   finally{ btn.classList.remove("loading"); label.textContent = "📍 위치 공유 확인하기"; }
 }
 
