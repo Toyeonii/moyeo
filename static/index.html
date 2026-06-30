@@ -92,6 +92,18 @@
   }
 
   .toast-wrap{position:absolute;top:78px;left:18px;right:18px;z-index:30;display:flex;flex-direction:column;gap:8px;pointer-events:none;}
+
+  .pick-mode-banner{
+    position:absolute;bottom:24px;left:18px;right:18px;z-index:30;
+    background:var(--ink);color:#fff;border-radius:18px;padding:14px 16px;
+    display:none;align-items:center;justify-content:space-between;gap:12px;
+    box-shadow:var(--shadow);
+  }
+  .pick-mode-banner span{font-size:13.5px;font-weight:600;}
+  .pick-mode-banner button{
+    background:rgba(255,255,255,0.16);border:none;color:#fff;border-radius:10px;
+    padding:8px 14px;font-size:12.5px;font-weight:700;cursor:pointer;flex-shrink:0;
+  }
   .toast{
     background:var(--ink);color:#fff;border-radius:14px;padding:12px 16px;font-size:13.5px;
     box-shadow:var(--shadow);animation:slideDown .25s ease;
@@ -233,7 +245,12 @@
 
     <div class="toast-wrap" id="toastWrap"></div>
 
-    <div class="sheet">
+    <div class="pick-mode-banner" id="pickModeBanner">
+      <span>📍 등록하고 싶은 위치를 지도에서 클릭해주세요</span>
+      <button onclick="cancelPickMode()">취소</button>
+    </div>
+
+    <div class="sheet" id="bottomSheet">
       <div class="sheet-handle"></div>
       <button class="refresh-btn" id="refreshBtn" onclick="refreshLocations()">
         <span id="refreshBtnLabel">📍 위치 공유 확인하기</span>
@@ -266,7 +283,7 @@
         </div>
         <div class="field"><label>반경(m)</label><input id="placeRadius" type="number" value="150" min="50" max="1000"></div>
       </div>
-      <p style="font-size:12.5px;color:var(--ink-soft);">지도 중심 위치에 장소가 등록됩니다. 지도를 원하는 위치로 옮긴 뒤 추가해주세요.</p>
+      <p style="font-size:12.5px;color:var(--ink-soft);">지도에서 클릭하신 위치에 장소가 등록됩니다.</p>
       <div class="modal-actions">
         <button class="btn btn-secondary" onclick="closeAddPlace()">취소</button>
         <button class="btn btn-primary" onclick="submitAddPlace()">추가하기</button>
@@ -373,6 +390,9 @@ function enterMain(){
 
 // ---------- 지도 ----------
 let placeCircles = [];
+let placePickMode = false;
+let pickedLatLng = null;
+let pickMarker = null;
 
 function initMap(){
   kakao.maps.load(()=>{
@@ -384,6 +404,19 @@ function initMap(){
     map = new kakao.maps.Map(container, options);
     loadPlaces();
     refreshLocations();
+
+    kakao.maps.event.addListener(map, "click", (mouseEvent)=>{
+      if(!placePickMode) return;
+      const latlng = mouseEvent.latLng;
+      pickedLatLng = { lat: latlng.getLat(), lng: latlng.getLng() };
+      if(pickMarker) pickMarker.setMap(null);
+      pickMarker = new kakao.maps.Marker({
+        position: latlng,
+        map: map,
+        image: makeMarkerImage("📍", false)
+      });
+      openAddPlaceModal();
+    });
   });
 }
 
@@ -540,27 +573,45 @@ async function pollEvents(){
 
 // ---------- 장소 추가 ----------
 function openAddPlace(){
+  placePickMode = true;
+  pickedLatLng = null;
+  document.getElementById("bottomSheet").style.display = "none";
+  document.getElementById("pickModeBanner").style.display = "flex";
+}
+function cancelPickMode(){
+  placePickMode = false;
+  document.getElementById("bottomSheet").style.display = "block";
+  document.getElementById("pickModeBanner").style.display = "none";
+}
+function openAddPlaceModal(){
+  placePickMode = false;
+  document.getElementById("bottomSheet").style.display = "block";
+  document.getElementById("pickModeBanner").style.display = "none";
   document.getElementById("placeModal").style.display = "flex";
 }
 function closeAddPlace(){
   document.getElementById("placeModal").style.display = "none";
+  document.getElementById("bottomSheet").style.display = "block";
+  if(pickMarker){ pickMarker.setMap(null); pickMarker = null; }
+  pickedLatLng = null;
 }
 async function submitAddPlace(){
   const name = document.getElementById("placeName").value.trim();
   const icon = document.getElementById("placeIcon").value;
   const radius = parseInt(document.getElementById("placeRadius").value) || 150;
   if(!name){ alert("장소 이름을 입력해주세요"); return; }
-  const center = map.getCenter();
-  const lat = center.getLat(), lng = center.getLng();
+  if(!pickedLatLng){ alert("지도에서 위치를 다시 클릭해주세요"); return; }
   try{
     const res = await fetch(`${API}/api/family/${state.familyId}/places`,{
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({name, lat, lng, radius_m:radius, icon})
+      body: JSON.stringify({name, lat:pickedLatLng.lat, lng:pickedLatLng.lng, radius_m:radius, icon})
     });
     const data = await res.json();
     if(data.error){ alert(data.error); return; }
-    closeAddPlace();
     document.getElementById("placeName").value = "";
+    if(pickMarker){ pickMarker.setMap(null); pickMarker = null; }
+    pickedLatLng = null;
+    document.getElementById("placeModal").style.display = "none";
     loadPlaces();
   }catch(e){ alert("장소 추가에 실패했어요."); }
 }
