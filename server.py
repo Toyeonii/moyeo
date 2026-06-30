@@ -12,10 +12,13 @@ from datetime import datetime
 from flask import Flask, request, jsonify, g, send_from_directory
 from flask_cors import CORS
 
-app = Flask(__name__, static_folder="static")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+
+app = Flask(__name__, static_folder=STATIC_DIR)
 CORS(app)
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "famtrack.db")
+DB_PATH = os.path.join(BASE_DIR, "famtrack.db")
 
 # ---------- DB ----------
 
