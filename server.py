@@ -6,6 +6,7 @@ Flask + PostgreSQL (Render.com), DATABASE_URL 환경변수로 연결
 import os
 import string
 import random
+import requests
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify, g, send_from_directory
 from flask_cors import CORS
@@ -24,6 +25,8 @@ if not DATABASE_URL:
         "DATABASE_URL 환경변수가 설정되어 있지 않습니다. "
         "Render의 Postgres Internal Database URL을 등록해주세요."
     )
+
+KAKAO_REST_API_KEY = os.environ.get("KAKAO_REST_API_KEY")
 
 
 # ---------- DB ----------
@@ -70,6 +73,8 @@ def init_db():
             lat DOUBLE PRECISION NOT NULL,
             lng DOUBLE PRECISION NOT NULL,
             accuracy DOUBLE PRECISION,
+            speed DOUBLE PRECISION,
+            address TEXT,
             updated_at TEXT NOT NULL
         );
 
@@ -105,6 +110,11 @@ def init_db():
             is_inside INTEGER DEFAULT 0,
             PRIMARY KEY (member_id, place_id)
         );
+
+        ALTER TABLE locations ADD COLUMN IF NOT EXISTS speed DOUBLE PRECISION;
+        ALTER TABLE locations ADD COLUMN IF NOT EXISTS address TEXT;
+        ALTER TABLE locations ADD COLUMN IF NOT EXISTS battery_level INTEGER;
+        ALTER TABLE locations ADD COLUMN IF NOT EXISTS battery_charging BOOLEAN;
         """
     )
     conn.commit()
@@ -125,6 +135,30 @@ def haversine_m(lat1, lng1, lat2, lng2):
     dlambda = radians(lng2 - lng1)
     a = sin(dphi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(dlambda / 2) ** 2
     return 2 * R * atan2(sqrt(a), sqrt(1 - a))
+
+
+def reverse_geocode(lat, lng):
+    """카카오 좌표->행정동 변환 REST API. 실패하면 None 반환."""
+    if not KAKAO_REST_API_KEY:
+        return None
+    try:
+        res = requests.get(
+            "https://dapi.kakao.com/v2/local/geo/coord2regioncode.json",
+            params={"x": lng, "y": lat},
+            headers={"Authorization": f"KakaoAK {KAKAO_REST_API_KEY}"},
+            timeout=3,
+        )
+        if res.status_code != 200:
+            return None
+        docs = res.json().get("documents", [])
+        for d in docs:
+            if d.get("region_type") == "H":  # 행정동 우선
+                return d.get("address_name")
+        if docs:
+            return docs[0].get("address_name")
+    except Exception:
+        return None
+    return None
 
 
 def now_iso():
@@ -236,14 +270,21 @@ def update_location():
     lat = data.get("lat")
     lng = data.get("lng")
     accuracy = data.get("accuracy")
+    speed = data.get("speed")
+    battery_level = data.get("battery_level")
+    battery_charging = data.get("battery_charging")
     if member_id is None or lat is None or lng is None:
         return jsonify({"error": "member_id, lat, lng가 필요합니다"}), 400
+
+    address = reverse_geocode(lat, lng)
 
     db = get_db()
     cur = db.cursor()
     cur.execute(
-        "INSERT INTO locations (member_id, lat, lng, accuracy, updated_at) VALUES (%s, %s, %s, %s, %s)",
-        (member_id, lat, lng, accuracy, now_iso()),
+        "INSERT INTO locations (member_id, lat, lng, accuracy, speed, address, "
+        "battery_level, battery_charging, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (member_id, lat, lng, accuracy, speed, address, battery_level, battery_charging, now_iso()),
     )
     db.commit()
 
@@ -327,7 +368,8 @@ def get_family_locations(family_id):
     result = []
     for m in members:
         cur.execute(
-            "SELECT lat, lng, accuracy, updated_at FROM locations WHERE member_id=%s ORDER BY id DESC LIMIT 1",
+            "SELECT lat, lng, accuracy, speed, address, battery_level, battery_charging, updated_at "
+            "FROM locations WHERE member_id=%s ORDER BY id DESC LIMIT 1",
             (m["id"],),
         )
         loc = cur.fetchone()

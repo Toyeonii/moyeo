@@ -149,6 +149,7 @@
   .member-name{font-weight:700;font-size:14.5px;display:flex;align-items:center;gap:6px;}
   .me-badge{font-size:10.5px;color:var(--coral-deep);background:#FFF1EC;padding:2px 7px;border-radius:99px;font-weight:800;}
   .member-meta{font-size:12.5px;color:var(--ink-soft);margin-top:2px;}
+  .member-sub{font-size:11.5px;color:var(--coral-deep);margin-top:3px;font-weight:600;}
   .member-status{font-size:11.5px;font-weight:700;padding:5px 10px;border-radius:99px;flex-shrink:0;}
   .status-fresh{background:var(--mint-soft);color:var(--mint);}
   .status-stale{background:#F1ECE3;color:var(--ink-soft);}
@@ -316,6 +317,7 @@ let state = {
 let selectedEmojiCreate = EMOJIS[0];
 let selectedEmojiJoin = EMOJIS[0];
 let map, markers = {}, overlays = {};
+let myLastLocation = null;
 let watchId = null;
 let eventPollTimer = null;
 
@@ -492,7 +494,7 @@ function startWatchingMyLocation(){
   if(watchId) navigator.geolocation.clearWatch(watchId);
   watchId = navigator.geolocation.watchPosition(
     pos=>{
-      sendMyLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+      sendMyLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, pos.coords.speed);
     },
     err=>{
       console.warn("위치 오류 code:", err.code, "message:", err.message);
@@ -503,18 +505,33 @@ function startWatchingMyLocation(){
   // 5분 주기 보조 폴링 (백그라운드 절전 대비)
   setInterval(()=>{
     navigator.geolocation.getCurrentPosition(
-      pos=> sendMyLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy),
+      pos=> sendMyLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, pos.coords.speed),
       err=> console.warn("위치 오류 code:", err.code, "message:", err.message),
       { enableHighAccuracy:false, maximumAge:60000, timeout:20000 }
     );
   }, 5*60*1000);
 }
 
-async function sendMyLocation(lat,lng,accuracy){
+async function getBatteryInfo(){
   try{
+    if(navigator.getBattery){
+      const battery = await navigator.getBattery();
+      return { level: Math.round(battery.level*100), charging: battery.charging };
+    }
+  }catch(e){ /* 배터리 API 미지원 브라우저 */ }
+  return null;
+}
+
+async function sendMyLocation(lat,lng,accuracy,speed){
+  try{
+    const battery = await getBatteryInfo();
     const res = await fetch(`${API}/api/location/update`,{
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({member_id:state.memberId, lat, lng, accuracy})
+      body: JSON.stringify({
+        member_id:state.memberId, lat, lng, accuracy, speed,
+        battery_level: battery ? battery.level : null,
+        battery_charging: battery ? battery.charging : null,
+      })
     });
     const data = await res.json();
     if(data.events && data.events.length){
@@ -531,6 +548,8 @@ async function refreshLocations(){
   try{
     const res = await fetch(`${API}/api/family/${state.familyId}/locations`);
     const members = await res.json();
+    const me = members.find(m=> m.member_id === state.memberId);
+    if(me && me.location){ myLastLocation = me.location; }
     renderMembers(members);
     members.forEach(m=>{
       if(m.location){
@@ -568,19 +587,66 @@ function timeAgo(iso){
   return `${Math.floor(hrs/24)}일 전`;
 }
 
+function distanceMeters(lat1, lng1, lat2, lng2){
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2-lat1);
+  const dLng = toRad(lng2-lng1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function formatDistance(m){
+  if(m < 1000) return `${Math.round(m)}m`;
+  return `${(m/1000).toFixed(1)}km`;
+}
+
+function movementLabel(speed){
+  if(speed === null || speed === undefined) return "";
+  if(speed < 0.5) return "🧍 머무는 중";
+  if(speed < 2) return "🚶 걷는 중";
+  return "🚗 이동 중";
+}
+
+function batteryLabel(level, charging){
+  if(level === null || level === undefined) return "";
+  const icon = level <= 20 ? "🪫" : "🔋";
+  return `${icon} ${level}%${charging ? " ⚡" : ""}`;
+}
+
 function renderMembers(members){
   const list = document.getElementById("memberList");
   list.innerHTML = members.map(m=>{
     const isMe = m.member_id === state.memberId;
     const fresh = m.location && (Date.now() - new Date(m.location.updated_at).getTime()) < 15*60*1000;
+    const loc = m.location;
+
+    let metaLine = "위치 공유 꺼짐";
+    let subLine = "";
+    if(loc){
+      const addressText = loc.address || "위치 확인 중";
+      metaLine = `${addressText} · ${timeAgo(loc.updated_at)}`;
+      const subParts = [];
+      if(!isMe && myLastLocation){
+        const dist = distanceMeters(myLastLocation.lat, myLastLocation.lng, loc.lat, loc.lng);
+        subParts.push(`📍 ${formatDistance(dist)} 거리`);
+      }
+      const moveLabel = movementLabel(loc.speed);
+      if(moveLabel) subParts.push(moveLabel);
+      const battLabel = batteryLabel(loc.battery_level, loc.battery_charging);
+      if(battLabel) subParts.push(battLabel);
+      subLine = subParts.join(" · ");
+    }
+
     return `
-      <div class="member-card${isMe?' me':''}" onclick="focusMember(${m.member_id}, ${m.location?m.location.lat:'null'}, ${m.location?m.location.lng:'null'})">
+      <div class="member-card${isMe?' me':''}" onclick="focusMember(${m.member_id}, ${loc?loc.lat:'null'}, ${loc?loc.lng:'null'})">
         <div class="member-avatar">${m.emoji}</div>
         <div class="member-info">
           <div class="member-name">${m.name}${isMe?'<span class="me-badge">나</span>':''}</div>
-          <div class="member-meta">${m.location ? timeAgo(m.location.updated_at) : "아직 위치 공유 전"}</div>
+          <div class="member-meta">${metaLine}</div>
+          ${subLine ? `<div class="member-sub">${subLine}</div>` : ''}
         </div>
-        ${m.location ? `<div class="member-status ${fresh?'status-fresh':'status-stale'}">${fresh?'최근':'오래됨'}</div>` : ''}
+        ${loc ? `<div class="member-status ${fresh?'status-fresh':'status-stale'}">${fresh?'최근':'오래됨'}</div>` : ''}
       </div>`;
   }).join("") || `<div class="empty-note">아직 가족이 없어요. 코드를 공유해보세요.</div>`;
 }
