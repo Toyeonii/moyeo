@@ -305,7 +305,7 @@
 
 </div>
 
-<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=91d2b249712af380637e0a06da07bc02&autoload=false&libraries=services"></script>
+<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=91d2b249712af380637e0a06da07bc02&amp;autoload=false&amp;libraries=services"></script>
 <script>
 const API = "";
 const EMOJIS = ["👩","👨","👧","👦","👵","👴","🐶","🐱"];
@@ -407,29 +407,43 @@ let pickedLatLng = null;
 let pickMarker = null;
 
 function initMap(){
-  kakao.maps.load(()=>{
-    const container = document.getElementById("map");
-    const options = {
-      center: new kakao.maps.LatLng(37.5665, 126.9780),
-      level: 5
-    };
-    map = new kakao.maps.Map(container, options);
-    loadPlaces();
-    refreshLocations();
+  if(typeof kakao === "undefined" || !kakao.maps){
+    showToast("⚠️ 지도 SDK를 불러오지 못했어요. 새로고침해주세요.");
+    return;
+  }
+  try{
+    kakao.maps.load(()=>{
+      try{
+        const container = document.getElementById("map");
+        const options = {
+          center: new kakao.maps.LatLng(37.5665, 126.9780),
+          level: 5
+        };
+        map = new kakao.maps.Map(container, options);
+        loadPlaces();
+        refreshLocations();
 
-    kakao.maps.event.addListener(map, "click", (mouseEvent)=>{
-      if(!placePickMode) return;
-      const latlng = mouseEvent.latLng;
-      pickedLatLng = { lat: latlng.getLat(), lng: latlng.getLng() };
-      if(pickMarker) pickMarker.setMap(null);
-      pickMarker = new kakao.maps.Marker({
-        position: latlng,
-        map: map,
-        image: makeMarkerImage("📍", false)
-      });
-      openAddPlaceModal();
+        kakao.maps.event.addListener(map, "click", (mouseEvent)=>{
+          if(!placePickMode) return;
+          const latlng = mouseEvent.latLng;
+          pickedLatLng = { lat: latlng.getLat(), lng: latlng.getLng() };
+          if(pickMarker) pickMarker.setMap(null);
+          pickMarker = new kakao.maps.Marker({
+            position: latlng,
+            map: map,
+            image: makeMarkerImage("📍", false)
+          });
+          openAddPlaceModal();
+        });
+      }catch(innerErr){
+        console.error("지도 초기화 오류:", innerErr);
+        showToast("⚠️ 지도를 초기화하지 못했어요: " + innerErr.message);
+      }
     });
-  });
+  }catch(err){
+    console.error("kakao.maps.load 호출 오류:", err);
+    showToast("⚠️ 지도 로드에 실패했어요: " + err.message);
+  }
 }
 
 function makeMarkerImage(emoji, isMe){
