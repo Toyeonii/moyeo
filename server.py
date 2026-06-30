@@ -79,6 +79,14 @@ def init_db():
             FOREIGN KEY (family_id) REFERENCES families (id)
         );
 
+        CREATE TABLE IF NOT EXISTS place_targets (
+            place_id INTEGER NOT NULL,
+            member_id INTEGER NOT NULL,
+            PRIMARY KEY (place_id, member_id),
+            FOREIGN KEY (place_id) REFERENCES places (id),
+            FOREIGN KEY (member_id) REFERENCES members (id)
+        );
+
         CREATE TABLE IF NOT EXISTS geofence_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             member_id INTEGER NOT NULL,
@@ -236,6 +244,18 @@ def update_location():
     return jsonify({"ok": True, "events": events})
 
 
+def is_target_member(db, place_id, member_id):
+    """이 장소가 특정 대상으로 지정되어 있으면 그 목록에 속하는지 확인.
+    대상이 하나도 지정되지 않았으면(전원 적용) True."""
+    targets = db.execute(
+        "SELECT member_id FROM place_targets WHERE place_id=?", (place_id,)
+    ).fetchall()
+    if not targets:
+        return True
+    target_ids = {t["member_id"] for t in targets}
+    return member_id in target_ids
+
+
 def check_geofences(db, member_id, lat, lng):
     """현재 위치를 기준으로 등록된 장소들에 대한 출입 상태를 갱신하고
     상태가 바뀐 경우 geofence_events에 기록 후 반환한다."""
@@ -248,6 +268,9 @@ def check_geofences(db, member_id, lat, lng):
 
     fired = []
     for place in places:
+        if not is_target_member(db, place["id"], member_id):
+            continue
+
         dist = haversine_m(lat, lng, place["lat"], place["lng"])
         is_inside_now = 1 if dist <= place["radius_m"] else 0
 
@@ -316,7 +339,15 @@ def get_family_locations(family_id):
 def list_places(family_id):
     db = get_db()
     rows = db.execute("SELECT * FROM places WHERE family_id=?", (family_id,)).fetchall()
-    return jsonify([dict(r) for r in rows])
+    result = []
+    for r in rows:
+        targets = db.execute(
+            "SELECT member_id FROM place_targets WHERE place_id=?", (r["id"],)
+        ).fetchall()
+        place = dict(r)
+        place["target_member_ids"] = [t["member_id"] for t in targets]
+        result.append(place)
+    return jsonify(result)
 
 
 @app.route("/api/family/<int:family_id>/places", methods=["POST"])
@@ -327,6 +358,7 @@ def add_place(family_id):
     lng = data.get("lng")
     radius_m = data.get("radius_m", 150)
     icon = data.get("icon", "📍")
+    target_member_ids = data.get("target_member_ids", [])
     if not name or lat is None or lng is None:
         return jsonify({"error": "name, lat, lng가 필요합니다"}), 400
 
@@ -335,8 +367,17 @@ def add_place(family_id):
         "INSERT INTO places (family_id, name, lat, lng, radius_m, icon, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (family_id, name, lat, lng, radius_m, icon, now_iso()),
     )
+    place_id = cur.lastrowid
+    for mid in target_member_ids:
+        db.execute(
+            "INSERT OR IGNORE INTO place_targets (place_id, member_id) VALUES (?, ?)",
+            (place_id, mid),
+        )
     db.commit()
-    return jsonify({"id": cur.lastrowid, "name": name, "lat": lat, "lng": lng, "radius_m": radius_m, "icon": icon})
+    return jsonify({
+        "id": place_id, "name": name, "lat": lat, "lng": lng,
+        "radius_m": radius_m, "icon": icon, "target_member_ids": target_member_ids,
+    })
 
 
 @app.route("/api/places/<int:place_id>", methods=["DELETE"])
@@ -344,6 +385,7 @@ def delete_place(place_id):
     db = get_db()
     db.execute("DELETE FROM places WHERE id=?", (place_id,))
     db.execute("DELETE FROM member_place_state WHERE place_id=?", (place_id,))
+    db.execute("DELETE FROM place_targets WHERE place_id=?", (place_id,))
     db.commit()
     return jsonify({"ok": True})
 
