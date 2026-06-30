@@ -1,0 +1,21 @@
+{
+  "name": "모여 - 가족 위치공유",
+  "short_name": "모여",
+  "description": "우리 가족만의 위치 공유 공간",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFF8F0",
+  "theme_color": "#FF8C69",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

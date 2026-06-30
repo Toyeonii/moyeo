@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>모여 · 가족 위치공유</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#FF8C69">
+<style>
+  :root{
+    --bg:#FFF8F0;
+    --card:#FBF1E6;
+    --ink:#2B3A55;
+    --ink-soft:#6B7690;
+    --coral:#FF8C69;
+    --coral-deep:#E8714C;
+    --mint:#5FB49C;
+    --mint-soft:#E3F1EC;
+    --line:#EDE0D2;
+    --shadow: 0 8px 24px rgba(43,58,85,0.08);
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{
+    height:100%;
+    font-family:'Pretendard',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    background:var(--bg);
+    color:var(--ink);
+    overscroll-behavior:none;
+  }
+  #app{position:relative;height:100vh;width:100vw;overflow:hidden;}
+
+  /* ---------- 온보딩 ---------- */
+  .onboard{
+    position:absolute;inset:0;background:var(--bg);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:32px 28px;z-index:50;
+  }
+  .onboard-emblem{
+    width:84px;height:84px;border-radius:28px;
+    background:linear-gradient(135deg,var(--coral),var(--coral-deep));
+    display:flex;align-items:center;justify-content:center;
+    font-size:38px;margin-bottom:24px;
+    box-shadow:0 12px 28px rgba(232,113,76,0.35);
+  }
+  .onboard h1{font-size:26px;font-weight:800;letter-spacing:-0.02em;margin-bottom:6px;}
+  .onboard p{color:var(--ink-soft);font-size:14.5px;margin-bottom:36px;text-align:center;line-height:1.5;}
+  .onboard-btns{width:100%;max-width:320px;display:flex;flex-direction:column;gap:12px;}
+  .btn{
+    border:none;border-radius:16px;padding:16px;font-size:15.5px;font-weight:700;
+    cursor:pointer;transition:transform .15s ease, opacity .15s ease;
+  }
+  .btn:active{transform:scale(0.97);}
+  .btn-primary{background:var(--coral);color:#fff;box-shadow:0 8px 20px rgba(255,140,105,0.35);}
+  .btn-secondary{background:var(--card);color:var(--ink);border:1.5px solid var(--line);}
+  .btn:disabled{opacity:0.5;cursor:not-allowed;}
+
+  .form-panel{width:100%;max-width:320px;display:flex;flex-direction:column;gap:14px;}
+  .field label{font-size:13px;font-weight:700;color:var(--ink-soft);display:block;margin-bottom:6px;}
+  .field input{
+    width:100%;padding:14px 16px;border-radius:14px;border:1.5px solid var(--line);
+    background:#fff;font-size:15px;color:var(--ink);outline:none;
+  }
+  .field input:focus{border-color:var(--coral);}
+  .emoji-row{display:flex;gap:8px;flex-wrap:wrap;}
+  .emoji-pick{
+    width:44px;height:44px;border-radius:12px;border:1.5px solid var(--line);
+    background:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;
+    cursor:pointer;
+  }
+  .emoji-pick.selected{border-color:var(--coral);background:#FFF1EC;}
+  .back-link{margin-top:18px;color:var(--ink-soft);font-size:13.5px;text-decoration:underline;cursor:pointer;background:none;border:none;}
+
+  /* ---------- 메인 화면 ---------- */
+  .map-wrap{position:absolute;inset:0;}
+  #map{width:100%;height:100%;}
+
+  .top-bar{
+    position:absolute;top:0;left:0;right:0;z-index:20;
+    padding:18px 18px 0 18px;display:flex;justify-content:space-between;align-items:flex-start;
+    pointer-events:none;
+  }
+  .brand-chip{
+    pointer-events:auto;background:rgba(255,255,255,0.92);backdrop-filter:blur(6px);
+    border-radius:18px;padding:10px 16px;box-shadow:var(--shadow);
+    display:flex;align-items:center;gap:8px;font-weight:800;font-size:14.5px;
+  }
+  .brand-chip span.dot{width:8px;height:8px;border-radius:50%;background:var(--mint);}
+  .icon-btn{
+    pointer-events:auto;width:44px;height:44px;border-radius:14px;background:rgba(255,255,255,0.92);
+    backdrop-filter:blur(6px);box-shadow:var(--shadow);display:flex;align-items:center;justify-content:center;
+    font-size:18px;border:none;cursor:pointer;
+  }
+
+  .toast-wrap{position:absolute;top:78px;left:18px;right:18px;z-index:30;display:flex;flex-direction:column;gap:8px;pointer-events:none;}
+  .toast{
+    background:var(--ink);color:#fff;border-radius:14px;padding:12px 16px;font-size:13.5px;
+    box-shadow:var(--shadow);animation:slideDown .25s ease;
+  }
+  @keyframes slideDown{from{opacity:0;transform:translateY(-8px);}to{opacity:1;transform:translateY(0);}}
+
+  .sheet{
+    position:absolute;left:0;right:0;bottom:0;z-index:25;
+    background:#fff;border-radius:24px 24px 0 0;box-shadow:0 -8px 32px rgba(43,58,85,0.14);
+    padding:14px 18px calc(18px + env(safe-area-inset-bottom)) 18px;
+    max-height:62vh;overflow-y:auto;
+  }
+  .sheet-handle{width:36px;height:4px;border-radius:99px;background:var(--line);margin:0 auto 14px auto;}
+
+  .refresh-btn{
+    width:100%;border:none;border-radius:18px;padding:16px;
+    background:linear-gradient(135deg,var(--coral),var(--coral-deep));color:#fff;
+    font-weight:800;font-size:15.5px;margin-bottom:16px;cursor:pointer;
+    box-shadow:0 10px 22px rgba(232,113,76,0.3);
+    display:flex;align-items:center;justify-content:center;gap:8px;
+  }
+  .refresh-btn:active{transform:scale(0.985);}
+  .refresh-btn.loading{opacity:0.75;}
+
+  .member-list{display:flex;flex-direction:column;gap:10px;}
+  .member-card{
+    display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:16px;
+    background:var(--card);cursor:pointer;border:1.5px solid transparent;
+  }
+  .member-card.me{border-color:var(--coral);}
+  .member-avatar{
+    width:46px;height:46px;border-radius:14px;background:#fff;display:flex;align-items:center;
+    justify-content:center;font-size:22px;flex-shrink:0;box-shadow:0 2px 6px rgba(43,58,85,0.08);
+  }
+  .member-info{flex:1;min-width:0;}
+  .member-name{font-weight:700;font-size:14.5px;display:flex;align-items:center;gap:6px;}
+  .me-badge{font-size:10.5px;color:var(--coral-deep);background:#FFF1EC;padding:2px 7px;border-radius:99px;font-weight:800;}
+  .member-meta{font-size:12.5px;color:var(--ink-soft);margin-top:2px;}
+  .member-status{font-size:11.5px;font-weight:700;padding:5px 10px;border-radius:99px;flex-shrink:0;}
+  .status-fresh{background:var(--mint-soft);color:var(--mint);}
+  .status-stale{background:#F1ECE3;color:var(--ink-soft);}
+
+  .section-title{font-size:13px;font-weight:800;color:var(--ink-soft);margin:18px 0 10px 0;display:flex;justify-content:space-between;align-items:center;}
+  .section-title button{background:none;border:none;color:var(--coral-deep);font-weight:700;font-size:12.5px;cursor:pointer;}
+
+  .place-list{display:flex;flex-direction:column;gap:8px;}
+  .place-card{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:var(--card);}
+  .place-icon{width:34px;height:34px;border-radius:10px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;}
+  .place-name{font-weight:700;font-size:13.5px;flex:1;}
+  .place-del{background:none;border:none;color:var(--ink-soft);font-size:13px;cursor:pointer;padding:6px;}
+
+  .empty-note{color:var(--ink-soft);font-size:12.5px;text-align:center;padding:14px 0;}
+
+  .modal-overlay{
+    position:absolute;inset:0;background:rgba(43,58,85,0.45);z-index:60;
+    display:flex;align-items:flex-end;justify-content:center;
+  }
+  .modal-card{
+    width:100%;background:#fff;border-radius:24px 24px 0 0;padding:22px 20px calc(22px + env(safe-area-inset-bottom)) 20px;
+    display:flex;flex-direction:column;gap:14px;
+  }
+  .modal-title{font-size:17px;font-weight:800;}
+  .modal-row{display:flex;gap:10px;}
+  .modal-row .field{flex:1;}
+  .modal-actions{display:flex;gap:10px;margin-top:6px;}
+  .modal-actions .btn{flex:1;}
+
+  .leaflet-pin{
+    width:40px;height:40px;border-radius:13px;background:#fff;border:2.5px solid var(--coral);
+    display:flex;align-items:center;justify-content:center;font-size:19px;
+    box-shadow:0 4px 12px rgba(43,58,85,0.18);
+  }
+  .leaflet-pin.is-me{border-color:var(--mint);}
+
+  ::-webkit-scrollbar{display:none;}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ===== 온보딩: 첫 화면 ===== -->
+  <div class="onboard" id="onboardWelcome">
+    <div class="onboard-emblem">🏡</div>
+    <h1>모여</h1>
+    <p>우리 가족만의 위치 공유 공간.<br>궁금할 때 눌러서 확인하고, 도착하면 알려드려요.</p>
+    <div class="onboard-btns">
+      <button class="btn btn-primary" onclick="showScreen('create')">가족 그룹 새로 만들기</button>
+      <button class="btn btn-secondary" onclick="showScreen('join')">기존 가족 코드로 참여하기</button>
+    </div>
+  </div>
+
+  <!-- ===== 온보딩: 가족 만들기 ===== -->
+  <div class="onboard" id="onboardCreate" style="display:none;">
+    <div class="onboard-emblem">👨‍👩‍👧</div>
+    <h1>가족 그룹 만들기</h1>
+    <p>대표로 한 분이 먼저 만들고, 발급된 코드를<br>가족들에게 공유해주세요.</p>
+    <div class="form-panel">
+      <div class="field"><label>가족 이름</label><input id="createFamilyName" type="text" placeholder="예: 우리집"></div>
+      <div class="field"><label>내 이름</label><input id="createMemberName" type="text" placeholder="예: 엄마"></div>
+      <div class="field"><label>나를 표시할 이모지</label>
+        <div class="emoji-row" id="emojiRowCreate"></div>
+      </div>
+      <button class="btn btn-primary" id="createSubmitBtn" onclick="submitCreate()" style="margin-top:6px;">만들기</button>
+    </div>
+    <button class="back-link" onclick="showScreen('welcome')">처음으로</button>
+  </div>
+
+  <!-- ===== 온보딩: 코드로 참여 ===== -->
+  <div class="onboard" id="onboardJoin" style="display:none;">
+    <div class="onboard-emblem">🔑</div>
+    <h1>가족 코드로 참여</h1>
+    <p>가족에게 받은 6자리 코드를 입력해주세요.</p>
+    <div class="form-panel">
+      <div class="field"><label>가족 코드</label><input id="joinFamilyCode" type="text" placeholder="예: AB12CD" style="text-transform:uppercase;letter-spacing:2px;font-weight:700;"></div>
+      <div class="field"><label>내 이름</label><input id="joinMemberName" type="text" placeholder="예: 아들"></div>
+      <div class="field"><label>나를 표시할 이모지</label>
+        <div class="emoji-row" id="emojiRowJoin"></div>
+      </div>
+      <button class="btn btn-primary" id="joinSubmitBtn" onclick="submitJoin()" style="margin-top:6px;">참여하기</button>
+    </div>
+    <button class="back-link" onclick="showScreen('welcome')">처음으로</button>
+  </div>
+
+  <!-- ===== 온보딩: 코드 발급 완료 ===== -->
+  <div class="onboard" id="onboardCodeDone" style="display:none;">
+    <div class="onboard-emblem">🎉</div>
+    <h1>그룹이 만들어졌어요</h1>
+    <p>아래 코드를 가족에게 보내서<br>함께 앱을 켜고 입력하게 해주세요.</p>
+    <div class="form-panel">
+      <div style="background:var(--card);border-radius:18px;padding:24px;text-align:center;">
+        <div style="font-size:12.5px;color:var(--ink-soft);font-weight:700;margin-bottom:8px;">가족 코드</div>
+        <div id="familyCodeDisplay" style="font-size:34px;font-weight:800;letter-spacing:6px;color:var(--coral-deep);"></div>
+      </div>
+      <button class="btn btn-primary" onclick="enterMain()">시작하기</button>
+    </div>
+  </div>
+
+  <!-- ===== 메인 화면 ===== -->
+  <div class="map-wrap" id="mainScreen" style="display:none;">
+    <div id="map"></div>
+
+    <div class="top-bar">
+      <div class="brand-chip"><span class="dot"></span><span id="familyNameTop">모여</span></div>
+      <button class="icon-btn" onclick="openSettings()">⚙️</button>
+    </div>
+
+    <div class="toast-wrap" id="toastWrap"></div>
+
+    <div class="sheet">
+      <div class="sheet-handle"></div>
+      <button class="refresh-btn" id="refreshBtn" onclick="refreshLocations()">
+        <span id="refreshBtnLabel">📍 위치 공유 확인하기</span>
+      </button>
+
+      <div class="member-list" id="memberList"></div>
+
+      <div class="section-title">
+        <span>알림 받을 장소</span>
+        <button onclick="openAddPlace()">+ 장소 추가</button>
+      </div>
+      <div class="place-list" id="placeList"></div>
+    </div>
+  </div>
+
+  <!-- ===== 장소 추가 모달 ===== -->
+  <div class="modal-overlay" id="placeModal" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-title">알림 받을 장소 추가</div>
+      <div class="field"><label>장소 이름</label><input id="placeName" type="text" placeholder="예: 학교, 집, 할머니댁"></div>
+      <div class="modal-row">
+        <div class="field"><label>아이콘</label>
+          <select id="placeIcon" style="width:100%;padding:14px;border-radius:14px;border:1.5px solid var(--line);font-size:18px;">
+            <option value="🏠">🏠 집</option>
+            <option value="🏫">🏫 학교</option>
+            <option value="🏢">🏢 회사</option>
+            <option value="🏥">🏥 병원</option>
+            <option value="📍">📍 기타</option>
+          </select>
+        </div>
+        <div class="field"><label>반경(m)</label><input id="placeRadius" type="number" value="150" min="50" max="1000"></div>
+      </div>
+      <p style="font-size:12.5px;color:var(--ink-soft);">지도 중심 위치에 장소가 등록됩니다. 지도를 원하는 위치로 옮긴 뒤 추가해주세요.</p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeAddPlace()">취소</button>
+        <button class="btn btn-primary" onclick="submitAddPlace()">추가하기</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script>
+const API = "";
+const EMOJIS = ["👩","👨","👧","👦","👵","👴","🐶","🐱"];
+let state = {
+  familyId: null, familyCode: null, familyName: null,
+  memberId: null, memberName: null, emoji: "👤",
+};
+let selectedEmojiCreate = EMOJIS[0];
+let selectedEmojiJoin = EMOJIS[0];
+let map, markers = {};
+let watchId = null;
+let eventPollTimer = null;
+
+// ---------- 로컬 저장 ----------
+function saveState(){ localStorage.setItem("moyeo_state", JSON.stringify(state)); }
+function loadState(){
+  const s = localStorage.getItem("moyeo_state");
+  if(s){ try{ state = JSON.parse(s); return true; }catch(e){ return false; } }
+  return false;
+}
+
+// ---------- 화면 전환 ----------
+function showScreen(name){
+  document.getElementById("onboardWelcome").style.display = name==="welcome" ? "flex":"none";
+  document.getElementById("onboardCreate").style.display = name==="create" ? "flex":"none";
+  document.getElementById("onboardJoin").style.display = name==="join" ? "flex":"none";
+  document.getElementById("onboardCodeDone").style.display = name==="codeDone" ? "flex":"none";
+}
+
+function renderEmojiRow(containerId, onPick){
+  const el = document.getElementById(containerId);
+  el.innerHTML = EMOJIS.map((e,i)=>`<button class="emoji-pick${i===0?' selected':''}" data-e="${e}">${e}</button>`).join("");
+  el.querySelectorAll(".emoji-pick").forEach(btn=>{
+    btn.onclick = ()=>{
+      el.querySelectorAll(".emoji-pick").forEach(b=>b.classList.remove("selected"));
+      btn.classList.add("selected");
+      onPick(btn.dataset.e);
+    };
+  });
+}
+
+// ---------- 가족 만들기/참여 ----------
+async function submitCreate(){
+  const familyName = document.getElementById("createFamilyName").value.trim() || "우리가족";
+  const memberName = document.getElementById("createMemberName").value.trim();
+  if(!memberName){ alert("내 이름을 입력해주세요"); return; }
+  const btn = document.getElementById("createSubmitBtn");
+  btn.disabled = true; btn.textContent = "만드는 중...";
+  try{
+    const res = await fetch(`${API}/api/family/create`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({family_name:familyName, member_name:memberName, emoji:selectedEmojiCreate})
+    });
+    const data = await res.json();
+    if(data.error){ alert(data.error); return; }
+    state = { familyId:data.family_id, familyCode:data.family_code, familyName:data.family_name,
+              memberId:data.member_id, memberName:data.member_name, emoji:selectedEmojiCreate };
+    saveState();
+    document.getElementById("familyCodeDisplay").textContent = data.family_code;
+    showScreen("codeDone");
+  }catch(e){ alert("연결에 문제가 있어요. 잠시 후 다시 시도해주세요."); }
+  finally{ btn.disabled=false; btn.textContent="만들기"; }
+}
+
+async function submitJoin(){
+  const code = document.getElementById("joinFamilyCode").value.trim().toUpperCase();
+  const memberName = document.getElementById("joinMemberName").value.trim();
+  if(!code || !memberName){ alert("코드와 이름을 모두 입력해주세요"); return; }
+  const btn = document.getElementById("joinSubmitBtn");
+  btn.disabled = true; btn.textContent = "참여하는 중...";
+  try{
+    const res = await fetch(`${API}/api/family/join`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({family_code:code, member_name:memberName, emoji:selectedEmojiJoin})
+    });
+    const data = await res.json();
+    if(data.error){ alert(data.error); return; }
+    state = { familyId:data.family_id, familyCode:data.family_code, familyName:data.family_name,
+              memberId:data.member_id, memberName:data.member_name, emoji:selectedEmojiJoin };
+    saveState();
+    enterMain();
+  }catch(e){ alert("연결에 문제가 있어요. 잠시 후 다시 시도해주세요."); }
+  finally{ btn.disabled=false; btn.textContent="참여하기"; }
+}
+
+function enterMain(){
+  showScreen("none");
+  document.getElementById("mainScreen").style.display = "block";
+  document.getElementById("familyNameTop").textContent = state.familyName || "모여";
+  initMap();
+  loadPlaces();
+  refreshLocations();
+  startWatchingMyLocation();
+  startEventPolling();
+}
+
+// ---------- 지도 ----------
+function initMap(){
+  map = L.map("map", {zoomControl:false, attributionControl:false}).setView([37.5665,126.9780], 14);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {maxZoom:19}).addTo(map);
+}
+
+function pinIcon(emoji, isMe){
+  return L.divIcon({
+    html:`<div class="leaflet-pin${isMe?' is-me':''}">${emoji}</div>`,
+    className:"", iconSize:[40,40], iconAnchor:[20,40]
+  });
+}
+
+function upsertMarker(memberId, lat, lng, emoji, isMe){
+  if(markers[memberId]){
+    markers[memberId].setLatLng([lat,lng]);
+  } else {
+    markers[memberId] = L.marker([lat,lng], {icon:pinIcon(emoji, isMe)}).addTo(map);
+  }
+}
+
+// ---------- 내 위치 전송 ----------
+function startWatchingMyLocation(){
+  if(!navigator.geolocation){ return; }
+  if(watchId) navigator.geolocation.clearWatch(watchId);
+  watchId = navigator.geolocation.watchPosition(
+    pos=>{
+      sendMyLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+    },
+    err=>{ console.warn("위치 오류", err); },
+    { enableHighAccuracy:false, maximumAge:60000, timeout:20000 }
+  );
+  // 5분 주기 보조 폴링 (백그라운드 절전 대비)
+  setInterval(()=>{
+    navigator.geolocation.getCurrentPosition(
+      pos=> sendMyLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy),
+      err=> console.warn(err),
+      { enableHighAccuracy:false, maximumAge:60000, timeout:20000 }
+    );
+  }, 5*60*1000);
+}
+
+async function sendMyLocation(lat,lng,accuracy){
+  try{
+    const res = await fetch(`${API}/api/location/update`,{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({member_id:state.memberId, lat, lng, accuracy})
+    });
+    const data = await res.json();
+    if(data.events && data.events.length){
+      data.events.forEach(ev=> showToast(formatEvent(ev)));
+    }
+  }catch(e){ /* 조용히 무시, 다음 주기에 재시도 */ }
+}
+
+// ---------- 가족 위치 새로고침 ----------
+async function refreshLocations(){
+  const btn = document.getElementById("refreshBtn");
+  const label = document.getElementById("refreshBtnLabel");
+  btn.classList.add("loading"); label.textContent = "확인하는 중...";
+  try{
+    const res = await fetch(`${API}/api/family/${state.familyId}/locations`);
+    const members = await res.json();
+    renderMembers(members);
+    members.forEach(m=>{
+      if(m.location){
+        upsertMarker(m.member_id, m.location.lat, m.location.lng, m.emoji, m.member_id===state.memberId);
+      }
+    });
+    const located = members.filter(m=>m.location);
+    if(located.length){
+      const bounds = L.latLngBounds(located.map(m=>[m.location.lat, m.location.lng]));
+      map.fitBounds(bounds, {padding:[60,60], maxZoom:16});
+    }
+  }catch(e){ showToast("위치를 불러오지 못했어요. 다시 시도해주세요."); }
+  finally{ btn.classList.remove("loading"); label.textContent = "📍 위치 공유 확인하기"; }
+}
+
+function timeAgo(iso){
+  if(!iso) return "위치 정보 없음";
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diffMs/60000);
+  if(mins < 1) return "방금 전";
+  if(mins < 60) return `${mins}분 전`;
+  const hrs = Math.floor(mins/60);
+  if(hrs < 24) return `${hrs}시간 전`;
+  return `${Math.floor(hrs/24)}일 전`;
+}
+
+function renderMembers(members){
+  const list = document.getElementById("memberList");
+  list.innerHTML = members.map(m=>{
+    const isMe = m.member_id === state.memberId;
+    const fresh = m.location && (Date.now() - new Date(m.location.updated_at).getTime()) < 15*60*1000;
+    return `
+      <div class="member-card${isMe?' me':''}" onclick="focusMember(${m.member_id}, ${m.location?m.location.lat:'null'}, ${m.location?m.location.lng:'null'})">
+        <div class="member-avatar">${m.emoji}</div>
+        <div class="member-info">
+          <div class="member-name">${m.name}${isMe?'<span class="me-badge">나</span>':''}</div>
+          <div class="member-meta">${m.location ? timeAgo(m.location.updated_at) : "아직 위치 공유 전"}</div>
+        </div>
+        ${m.location ? `<div class="member-status ${fresh?'status-fresh':'status-stale'}">${fresh?'최근':'오래됨'}</div>` : ''}
+      </div>`;
+  }).join("") || `<div class="empty-note">아직 가족이 없어요. 코드를 공유해보세요.</div>`;
+}
+
+function focusMember(memberId, lat, lng){
+  if(lat===null || lng===null) return;
+  map.setView([lat,lng], 17, {animate:true});
+}
+
+// ---------- 토스트 ----------
+function showToast(msg){
+  const wrap = document.getElementById("toastWrap");
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = msg;
+  wrap.appendChild(el);
+  setTimeout(()=> el.remove(), 5000);
+}
+
+function formatEvent(ev){
+  const verb = ev.event_type === "arrive" ? "도착했어요" : "출발했어요";
+  return `${ev.place_icon} ${ev.member_name}님이 ${ev.place_name}에 ${verb}`;
+}
+
+// ---------- 지오펜스 이벤트 폴링 (다른 가족 알림 받기) ----------
+function startEventPolling(){
+  if(eventPollTimer) clearInterval(eventPollTimer);
+  pollEvents();
+  eventPollTimer = setInterval(pollEvents, 60*1000);
+}
+async function pollEvents(){
+  try{
+    const res = await fetch(`${API}/api/family/${state.familyId}/events`);
+    const events = await res.json();
+    events.forEach(ev=>{
+      showToast(formatEvent({event_type:ev.event_type, member_name:ev.member_name, place_name:ev.place_name, place_icon:ev.place_icon}));
+    });
+  }catch(e){ /* ignore */ }
+}
+
+// ---------- 장소 추가 ----------
+function openAddPlace(){
+  document.getElementById("placeModal").style.display = "flex";
+}
+function closeAddPlace(){
+  document.getElementById("placeModal").style.display = "none";
+}
+async function submitAddPlace(){
+  const name = document.getElementById("placeName").value.trim();
+  const icon = document.getElementById("placeIcon").value;
+  const radius = parseInt(document.getElementById("placeRadius").value) || 150;
+  if(!name){ alert("장소 이름을 입력해주세요"); return; }
+  const center = map.getCenter();
+  try{
+    const res = await fetch(`${API}/api/family/${state.familyId}/places`,{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({name, lat:center.lat, lng:center.lng, radius_m:radius, icon})
+    });
+    const data = await res.json();
+    if(data.error){ alert(data.error); return; }
+    closeAddPlace();
+    document.getElementById("placeName").value = "";
+    loadPlaces();
+    L.circle([center.lat, center.lng], {radius, color:"#FF8C69", fillOpacity:0.08}).addTo(map);
+  }catch(e){ alert("장소 추가에 실패했어요."); }
+}
+
+async function loadPlaces(){
+  try{
+    const res = await fetch(`${API}/api/family/${state.familyId}/places`);
+    const places = await res.json();
+    const list = document.getElementById("placeList");
+    list.innerHTML = places.map(p=>`
+      <div class="place-card">
+        <div class="place-icon">${p.icon}</div>
+        <div class="place-name">${p.name} <span style="color:var(--ink-soft);font-weight:500;font-size:11.5px;">반경 ${p.radius_m}m</span></div>
+        <button class="place-del" onclick="deletePlace(${p.id})">삭제</button>
+      </div>`).join("") || `<div class="empty-note">등록된 장소가 없어요. 학교나 집을 추가해보세요.</div>`;
+    places.forEach(p=>{
+      L.circle([p.lat,p.lng],{radius:p.radius_m, color:"#FF8C69", weight:1.5, fillOpacity:0.07}).addTo(map);
+    });
+  }catch(e){ /* ignore */ }
+}
+async function deletePlace(placeId){
+  if(!confirm("이 장소를 삭제할까요?")) return;
+  await fetch(`${API}/api/places/${placeId}`, {method:"DELETE"});
+  loadPlaces();
+}
+
+function openSettings(){
+  if(confirm(`가족 코드: ${state.familyCode}\n\n이 코드를 가족에게 공유해 초대할 수 있어요.\n\n로그아웃 하시겠어요?`)){
+    localStorage.removeItem("moyeo_state");
+    location.reload();
+  }
+}
+
+// ---------- 초기화 ----------
+window.onload = ()=>{
+  renderEmojiRow("emojiRowCreate", e=> selectedEmojiCreate = e);
+  renderEmojiRow("emojiRowJoin", e=> selectedEmojiJoin = e);
+  if(loadState() && state.memberId){
+    enterMain();
+  } else {
+    showScreen("welcome");
+  }
+  if("serviceWorker" in navigator){
+    navigator.serviceWorker.register("sw.js").catch(()=>{});
+  }
+};
+</script>
+</body>
+</html>
