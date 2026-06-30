@@ -598,6 +598,15 @@ async function pollEvents(){
 }
 
 // ---------- 장소 추가 ----------
+function restoreMapInteraction(){
+  if(!map) return;
+  try{
+    map.setDraggable(true);
+    map.setZoomable(true);
+    map.relayout();
+  }catch(e){ console.warn("지도 상태 복구 실패:", e); }
+}
+
 function openAddPlace(){
   placePickMode = true;
   pickedLatLng = null;
@@ -608,6 +617,7 @@ function cancelPickMode(){
   placePickMode = false;
   document.getElementById("bottomSheet").style.display = "block";
   document.getElementById("pickModeBanner").style.display = "none";
+  restoreMapInteraction();
 }
 let selectedTargetIds = new Set();
 
@@ -648,6 +658,7 @@ function closeAddPlace(){
   document.getElementById("bottomSheet").style.display = "block";
   if(pickMarker){ pickMarker.setMap(null); pickMarker = null; }
   pickedLatLng = null;
+  restoreMapInteraction();
 }
 async function submitAddPlace(){
   const name = document.getElementById("placeName").value.trim();
@@ -669,6 +680,7 @@ async function submitAddPlace(){
     if(pickMarker){ pickMarker.setMap(null); pickMarker = null; }
     pickedLatLng = null;
     document.getElementById("placeModal").style.display = "none";
+    restoreMapInteraction();
     loadPlaces();
   }catch(e){ alert("장소 추가에 실패했어요."); }
 }
